@@ -35,11 +35,13 @@ end
 println("\n\n All tasks finished in ", time() - t0, " seconds")
 
 a=1
+
 # @async localizes variables
 @async (sleep(2.0); println("@async : ", a))
 
 # @schedule does not
 @schedule (sleep(2.0); println("@schedule : ", a))
+
 a="Hello";
 
 
@@ -48,6 +50,7 @@ function producer(cnt)
         for i in 1:cnt
             produce(i)
         end
+        println("Producer DONE!")
     end
 end
 
@@ -56,7 +59,7 @@ function consumer(t, id)
         sleep(1.0)
         while !istaskdone(t)
             v = consume(t)
-            println("consumer $id ===> $v")
+            (v != nothing) && println("consumer $id ===> $v")
         end
         println("consumer $id DONE!")
     end
@@ -86,7 +89,7 @@ end
     for v in c
         println(v)
     end
-    println("DONE!")
+    println("Consumer task DONE!")
 end;
 
 
@@ -102,7 +105,7 @@ end
 end
 
 nprocs() > 1 && rmprocs(workers(); waitfor=0.5)
-#addprocs(4)
+addprocs(4)
 files = filter(x->endswith(x, ".jl"), readdir("/Users/amitm/Julia/julia/base"))
 
 # compilation run
@@ -112,13 +115,14 @@ pmap(x->begin
     end, files);
 
 # timed run
-@time resp = pmap(x->begin
+@time pmap(x->begin
         path=joinpath("/Users/amitm/Julia/julia/base",x)
         # simulate compute time by calculating MD5 a few times
-        for i in 1:6  
+        for i in 1:5
             readall(`md5 $path`)
         end
-    end, files);
+        readall(`md5 $path`)
+    end, files)
 
 nprocs() > 1 && rmprocs(workers(); waitfor=0.5)
 addprocs(4)
@@ -126,7 +130,7 @@ addprocs(4)
 jobs_c = RemoteRef(()->Channel(100))
 results_c = RemoteRef(()->Channel(100))
 
-# load function on all workers
+# define function on all workers
 @everywhere function do_some_work(jobs_c, results_c)
     println("Worker task started.")
     while true
@@ -150,14 +154,14 @@ for p in workers()
     remotecall(p, do_some_work, jobs_c, results_c)
 end
 
-# add to the job channel
-jobs = [rand(1:10) for x in 1:30]
+# adding jobs....
+jobs = rand(1:10, 30)
 for i in jobs
     put!(jobs_c, i)
 end
 
-# Have the worker tasks exit
-for p in workers()
+# Have the worker tasks exit at the end
+for i in 1:nworkers()
     put!(jobs_c, :EXIT)
 end
 
@@ -217,32 +221,3 @@ put!(rr, "put! from $(myid())")
 remotecall_fetch(p2, r->(println(take!(r)); put!(r, "put! from $(myid())"); nothing), rr)
 
 fetch(rr)
-
-nprocs() > 1 && rmprocs(workers(); waitfor=0.5)
-addprocs(4)
-
-initfn = S-> map!((x)->randn(), S.loc_subarr_1d)
-
-S=SharedArray(Float64, (1000,1000); init=initfn)
-
-fieldnames(S)
-
-S.pids
-
-myid()
-
-#remotecall_fetch(procs(S)[1], S->S.loc_subarr_1d, S)
-length(S)
-
-@time @sync begin
-    for p in procs(S)
-      @async begin
-            remotecall_fetch(p, S->map!(x->abs(x), S.loc_subarr_1d), S)
-      end
-    end
-end
-
-@time @sync @parallel for i in 1:length(S)
-    S[i] = abs(S[i])
-end
-S
